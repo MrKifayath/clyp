@@ -4,11 +4,21 @@ import { useState } from 'react';
 
 export default function Home() {
   const [url, setUrl] = useState('');
+  const [apiKey, setApiKey] = useState('');
   const [videoInfo, setVideoInfo] = useState(null);
   const [isFetchingInfo, setIsFetchingInfo] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(null);
   const [error, setError] = useState('');
+  
+  // Tab State
+  const [activeTab, setActiveTab] = useState('manual'); // 'manual' | 'ai'
+
+  // Highlights state
+  const [isGeneratingHighlights, setIsGeneratingHighlights] = useState(false);
+  const [highlightsStatus, setHighlightsStatus] = useState('');
+  const [highlights, setHighlights] = useState([]);
+  const [highlightsError, setHighlightsError] = useState('');
 
   // Time states
   const [startHr, setStartHr] = useState('00');
@@ -28,6 +38,9 @@ export default function Home() {
     setError('');
     setIsFetchingInfo(true);
     setVideoInfo(null);
+    setHighlights([]);
+    setHighlightsError('');
+    setHighlightsStatus('');
 
     try {
       const response = await fetch('/api/info', {
@@ -44,7 +57,6 @@ export default function Home() {
 
       setVideoInfo(data);
       
-      // Pre-fill end time based on video duration
       const totalSeconds = data.duration;
       if (totalSeconds) {
         const h = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
@@ -61,6 +73,89 @@ export default function Home() {
     }
   };
 
+  const handleGenerateHighlights = async () => {
+    if (!url || !apiKey) {
+      setHighlightsError('Both YouTube URL and Gemini API Key are required.');
+      return;
+    }
+
+    setHighlightsError('');
+    setIsGeneratingHighlights(true);
+    setHighlightsStatus('Initializing...');
+    setHighlights([]);
+
+    try {
+      const response = await fetch('/api/highlights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, apiKey }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to start highlights generation');
+      }
+
+      const taskId = data.taskId;
+
+      // Poll for progress
+      const pollInterval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/highlights?id=${taskId}`);
+          if (res.ok) {
+            const statusData = await res.json();
+            
+            if (statusData.status === 'error') {
+              clearInterval(pollInterval);
+              setHighlightsError(statusData.error || 'Processing failed');
+              setIsGeneratingHighlights(false);
+              setHighlightsStatus('');
+            } else if (statusData.status === 'completed') {
+              clearInterval(pollInterval);
+              setHighlights(statusData.highlights || []);
+              setIsGeneratingHighlights(false);
+              setHighlightsStatus('');
+            } else if (statusData.step) {
+              setHighlightsStatus(statusData.step);
+            }
+          }
+        } catch (err) {
+          console.error('Poll failed:', err);
+        }
+      }, 3000);
+
+    } catch (err) {
+      setHighlightsError(err.message);
+      setIsGeneratingHighlights(false);
+      setHighlightsStatus('');
+    }
+  };
+
+  const applyTimestamp = (start, end) => {
+    const parseTime = (timeStr) => {
+      const parts = timeStr.split(':');
+      if (parts.length === 3) return parts;
+      if (parts.length === 2) return ['00', parts[0], parts[1]];
+      return ['00', '00', '00'];
+    };
+
+    const [sH, sM, sS] = parseTime(start);
+    const [eH, eM, eS] = parseTime(end);
+
+    setStartHr(sH);
+    setStartMin(sM);
+    setStartSec(sS);
+
+    setEndHr(eH);
+    setEndMin(eM);
+    setEndSec(eS);
+    
+    // Switch to manual tab to download
+    setActiveTab('manual');
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  };
+
   const handleDownload = async () => {
     if (!url || !videoInfo) return;
 
@@ -72,7 +167,6 @@ export default function Home() {
     const start = `${startHr}:${startMin}:${startSec}`;
     const end = `${endHr}:${endMin}:${endSec}`;
 
-    // Start polling progress
     const pollInterval = setInterval(async () => {
       try {
         const res = await fetch(`/api/download?id=${taskId}`);
@@ -101,7 +195,6 @@ export default function Home() {
         throw new Error(errorData.error || 'Download failed');
       }
 
-      // Convert stream to blob
       const blob = await response.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -137,15 +230,16 @@ export default function Home() {
   return (
     <main className="container">
       <header className="header">
-        <h1 className="title">YouTube Stream Clip Maker</h1>
-        <p className="subtitle">Download specific high-quality sections from long videos or streams</p>
+        <h1 className="title">StreamClipper</h1>
+        <p className="subtitle">High-fidelity stream highlighting and extraction.</p>
       </header>
 
       {error && <div className="error-message">{error}</div>}
 
-      <section className="card">
+      <section className="card glass-panel">
+        <h2 className="section-title">Source Media</h2>
         <div className="input-group">
-          <label className="input-label">YouTube URL</label>
+          <label className="input-label">Media URL</label>
           <input
             type="text"
             className="input-field"
@@ -156,14 +250,14 @@ export default function Home() {
         </div>
 
         <button 
-          className="btn" 
+          className="btn btn-primary" 
           onClick={fetchVideoInfo} 
           disabled={isFetchingInfo || !url}
         >
           {isFetchingInfo ? (
-            <><div className="spinner"></div> Fetching Info...</>
+            <><div className="spinner"></div> Fetching Metadata...</>
           ) : (
-            'Load Video'
+            'Load Source Media'
           )}
         </button>
 
@@ -182,77 +276,146 @@ export default function Home() {
       </section>
 
       {videoInfo && (
-        <section className="card">
-          <div className="time-inputs">
-            <div className="time-box">
-              <label className="input-label">Start Time</label>
-              <div className="time-fields">
-                <input type="text" className="input-field time-field" maxLength="2" value={startHr} onChange={e => setStartHr(e.target.value)} placeholder="HH" />
-                <span className="time-separator">:</span>
-                <input type="text" className="input-field time-field" maxLength="2" value={startMin} onChange={e => setStartMin(e.target.value)} placeholder="MM" />
-                <span className="time-separator">:</span>
-                <input type="text" className="input-field time-field" maxLength="2" value={startSec} onChange={e => setStartSec(e.target.value)} placeholder="SS" />
-              </div>
-            </div>
-
-            <div className="time-box">
-              <label className="input-label">End Time</label>
-              <div className="time-fields">
-                <input type="text" className="input-field time-field" maxLength="2" value={endHr} onChange={e => setEndHr(e.target.value)} placeholder="HH" />
-                <span className="time-separator">:</span>
-                <input type="text" className="input-field time-field" maxLength="2" value={endMin} onChange={e => setEndMin(e.target.value)} placeholder="MM" />
-                <span className="time-separator">:</span>
-                <input type="text" className="input-field time-field" maxLength="2" value={endSec} onChange={e => setEndSec(e.target.value)} placeholder="SS" />
-              </div>
-            </div>
+        <div className="workspace">
+          <div className="tabs">
+            <button 
+              className={`tab-btn ${activeTab === 'manual' ? 'active' : ''}`}
+              onClick={() => setActiveTab('manual')}
+            >
+              Manual Extraction
+            </button>
+            <button 
+              className={`tab-btn ${activeTab === 'ai' ? 'active' : ''}`}
+              onClick={() => setActiveTab('ai')}
+            >
+              Smart Highlights
+            </button>
           </div>
 
-          <div className="input-group" style={{ marginTop: '30px', marginBottom: 0 }}>
-            <button 
-              className="btn" 
-              onClick={handleDownload} 
-              disabled={isDownloading}
-              style={{ padding: '18px', fontSize: '1.2rem' }}
-            >
-              {isDownloading ? (
-                <><div className="spinner"></div> Processing & Downloading...</>
-              ) : (
-                'Download Selection (Full Quality)'
-              )}
-            </button>
-            {isDownloading && (
-              <div style={{ marginTop: '20px', padding: '16px', backgroundColor: 'rgba(0, 0, 0, 0.3)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                <div style={{
-                  backgroundColor: 'rgba(241, 31, 66, 0.1)',
-                  borderLeft: '4px solid var(--primary)',
-                  padding: '12px 16px',
-                  borderRadius: '4px',
-                  marginBottom: '16px',
-                  fontSize: '0.9rem',
-                  lineHeight: '1.4',
-                  color: 'var(--text-primary)',
-                  textAlign: 'left'
-                }}>
-                  <strong>ℹ️ Notice:</strong> You can switch your tab and continue, but <strong>do not close this tab</strong>. After processing, you will be prompted to choose a save location for this clip.
+          <div className="tab-content glass-panel card">
+            {activeTab === 'manual' && (
+              <div className="tab-pane fade-in">
+                <h2 className="section-title">Define Clip Segment</h2>
+                <p className="section-description">Set precise timestamps to extract a high-quality segment.</p>
+                <div className="time-inputs">
+                  <div className="time-box">
+                    <label className="input-label">Start Time</label>
+                    <div className="time-fields">
+                      <input type="text" className="input-field time-field" maxLength="2" value={startHr} onChange={e => setStartHr(e.target.value)} placeholder="HH" />
+                      <span className="time-separator">:</span>
+                      <input type="text" className="input-field time-field" maxLength="2" value={startMin} onChange={e => setStartMin(e.target.value)} placeholder="MM" />
+                      <span className="time-separator">:</span>
+                      <input type="text" className="input-field time-field" maxLength="2" value={startSec} onChange={e => setStartSec(e.target.value)} placeholder="SS" />
+                    </div>
+                  </div>
+
+                  <div className="time-box">
+                    <label className="input-label">End Time</label>
+                    <div className="time-fields">
+                      <input type="text" className="input-field time-field" maxLength="2" value={endHr} onChange={e => setEndHr(e.target.value)} placeholder="HH" />
+                      <span className="time-separator">:</span>
+                      <input type="text" className="input-field time-field" maxLength="2" value={endMin} onChange={e => setEndMin(e.target.value)} placeholder="MM" />
+                      <span className="time-separator">:</span>
+                      <input type="text" className="input-field time-field" maxLength="2" value={endSec} onChange={e => setEndSec(e.target.value)} placeholder="SS" />
+                    </div>
+                  </div>
                 </div>
-                <p style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: downloadProgress ? '12px' : '0' }}>
-                  This process relies on yt-dlp. Please wait while the clip is processed. Large high-quality files may take a minute or two.
-                </p>
-                {downloadProgress && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.95rem' }}>
-                    <div style={{ color: 'var(--text-secondary)' }}>Speed: <span style={{ color: 'var(--text-primary)', fontWeight: 'bold' }}>{downloadProgress.speed || 'N/A'}</span></div>
-                    <div style={{ color: 'var(--text-secondary)' }}>Size Processed: <span style={{ color: 'var(--text-primary)', fontWeight: 'bold' }}>{downloadProgress.size || '0 KiB'}</span></div>
-                    <div style={{ color: 'var(--text-secondary)' }}>Duration Copied: <span style={{ color: 'var(--text-primary)', fontWeight: 'bold' }}>{downloadProgress.time || 'N/A'}</span></div>
-                    <div style={{ color: 'var(--text-secondary)' }}>FPS: <span style={{ color: 'var(--text-primary)', fontWeight: 'bold' }}>{downloadProgress.fps || 'N/A'}</span></div>
-                    {downloadProgress.frame && (
-                      <div style={{ color: 'var(--text-secondary)', gridColumn: 'span 2' }}>Frames Extracted: <span style={{ color: 'var(--text-primary)' }}>{downloadProgress.frame}</span></div>
+
+                <div className="input-group" style={{ marginTop: '32px', marginBottom: 0 }}>
+                  <button 
+                    className="btn btn-primary large-btn" 
+                    onClick={handleDownload} 
+                    disabled={isDownloading}
+                  >
+                    {isDownloading ? (
+                      <><div className="spinner"></div> Extracting Clip...</>
+                    ) : (
+                      'Download Full Quality Clip'
                     )}
+                  </button>
+                  {isDownloading && (
+                    <div className="download-status-box">
+                      <div className="notice-box">
+                        <strong>Background Task:</strong> You can switch tabs, but do not close this window. A save prompt will appear upon completion.
+                      </div>
+                      <p className="status-text">
+                        Processing segment. High-fidelity rendering may take a moment.
+                      </p>
+                      {downloadProgress && (
+                        <div className="progress-grid">
+                          <div>Speed: <span>{downloadProgress.speed || 'N/A'}</span></div>
+                          <div>Size Processed: <span>{downloadProgress.size || '0 KiB'}</span></div>
+                          <div>Duration Copied: <span>{downloadProgress.time || 'N/A'}</span></div>
+                          <div>FPS: <span>{downloadProgress.fps || 'N/A'}</span></div>
+                          {downloadProgress.frame && (
+                            <div className="col-span-2">Frames Extracted: <span>{downloadProgress.frame}</span></div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'ai' && (
+              <div className="tab-pane fade-in">
+                <h2 className="section-title">Automated Analysis</h2>
+                <p className="section-description">
+                  Generate timestamps of notable moments. Processing complex streams may take several minutes.
+                </p>
+                
+                <div className="input-group">
+                  <label className="input-label">Gemini API Key</label>
+                  <input
+                    type="password"
+                    className="input-field"
+                    placeholder="Enter authentication key"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                </div>
+
+                {highlightsError && <div className="error-message">{highlightsError}</div>}
+
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={handleGenerateHighlights} 
+                  disabled={isGeneratingHighlights || !url || !apiKey}
+                >
+                  {isGeneratingHighlights ? (
+                    <><div className="spinner"></div> {highlightsStatus || 'Processing...'}</>
+                  ) : (
+                    'Analyze Media'
+                  )}
+                </button>
+
+                {highlights.length > 0 && (
+                  <div className="highlights-list">
+                    <h3 className="highlights-title">Detected Segments</h3>
+                    {highlights.map((highlight, index) => (
+                      <div key={index} className="highlight-item">
+                        <div className="highlight-content">
+                          <h4>{highlight.title}</h4>
+                          <p>{highlight.description}</p>
+                          <span className="timestamp-badge">
+                            {highlight.start} - {highlight.end}
+                          </span>
+                        </div>
+                        <button 
+                          className="btn-small"
+                          onClick={() => applyTimestamp(highlight.start, highlight.end)}
+                        >
+                          Send to Extractor
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
             )}
           </div>
-        </section>
+        </div>
       )}
     </main>
   );
