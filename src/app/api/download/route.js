@@ -102,9 +102,11 @@ export async function POST(request) {
       updateProgress(line);
     });
 
+    let errorMessages = [];
     yt.stderr.on('data', (data) => {
       const line = data.toString();
       console.error(`yt-dlp stderr: ${line}`);
+      errorMessages.push(line);
       updateProgress(line);
     });
 
@@ -113,8 +115,23 @@ export async function POST(request) {
         // Update status file to finished or error
         if (code !== 0) {
           console.error(`yt-dlp exited with code ${code}`);
-          fs.writeFileSync(progressPath, JSON.stringify({ status: 'error', error: 'Failed to process video segment' }));
-          resolve(NextResponse.json({ error: 'Failed to process video segment' }, { status: 500 }));
+          
+          // Check for specific error types and provide helpful messages
+          const fullError = errorMessages.join(' ');
+          let errorMessage = 'Failed to process video segment';
+          
+          if (fullError.includes('This live event has ended')) {
+            errorMessage = 'This video is a recently ended live stream. YouTube may still be processing it. Please try again in a few minutes.';
+          } else if (fullError.includes('Video unavailable')) {
+            errorMessage = 'Video is unavailable. It may be private, deleted, or region-restricted.';
+          } else if (fullError.includes('Sign in to confirm your age')) {
+            errorMessage = 'This video requires age verification. Please provide valid YouTube cookies.';
+          } else if (fullError.includes('members-only')) {
+            errorMessage = 'This video is members-only and requires authentication cookies.';
+          }
+          
+          fs.writeFileSync(progressPath, JSON.stringify({ status: 'error', error: errorMessage }));
+          resolve(NextResponse.json({ error: errorMessage }, { status: 500 }));
           return;
         }
 
