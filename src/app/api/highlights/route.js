@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import { GoogleAIFileManager, FileState } from "@google/generative-ai/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getCookiesFile } from '../../utils/yt-dlp';
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -51,13 +52,17 @@ export async function POST(request) {
 
     fs.writeFileSync(progressPath, JSON.stringify({ status: 'starting', step: 'Downloading low-res video...' }));
 
-    // Download worst video + audio to save space and time
+    const cookiesPath = getCookiesFile();
     const args = [
       '-f', 'worst',
       '--merge-output-format', 'mp4',
       '-o', outputTemplate,
-      url
     ];
+
+    if (cookiesPath) {
+      args.push('--cookies', cookiesPath);
+    }
+    args.push(url);
 
     console.log(`Executing yt-dlp ${args.join(' ')}`);
 

@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
+import { getCookiesFile } from '../../utils/yt-dlp';
 
 // Helper to parse progress from ffmpeg/yt-dlp output
 function parseProgress(line) {
@@ -68,14 +69,19 @@ export async function POST(request) {
     // Initial progress write
     fs.writeFileSync(progressPath, JSON.stringify({ status: 'starting', progress: null }));
 
+    const cookiesPath = getCookiesFile();
     const args = [
       '--download-sections', `*${start}-${end}`,
       '-f', 'bestvideo+bestaudio/best',
       '--merge-output-format', 'mkv',
       '--concurrent-fragments', '5',
       '-o', outputTemplate,
-      url
     ];
+
+    if (cookiesPath) {
+      args.push('--cookies', cookiesPath);
+    }
+    args.push(url);
 
     console.log(`Executing yt-dlp ${args.join(' ')}`);
 

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { exec } from 'child_process';
 import util from 'util';
 
+import { getCookiesFile } from '../../utils/yt-dlp';
+
 const execAsync = util.promisify(exec);
 
 export async function POST(request) {
@@ -11,8 +13,11 @@ export async function POST(request) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
 
+    const cookiesPath = getCookiesFile();
+    const cookiesArg = cookiesPath ? `--cookies "${cookiesPath}"` : '';
+
     // Run yt-dlp to get JSON metadata
-    const command = `yt-dlp -j --no-warnings "${url}"`;
+    const command = `yt-dlp -j --no-warnings ${cookiesArg} "${url}"`;
     const { stdout } = await execAsync(command);
     
     const data = JSON.parse(stdout);
