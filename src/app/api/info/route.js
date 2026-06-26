@@ -16,8 +16,8 @@ export async function POST(request) {
     const cookiesPath = getCookiesFile();
     const cookiesArg = cookiesPath ? `--cookies "${cookiesPath}"` : '';
 
-    // Run yt-dlp to get JSON metadata
-    const command = `yt-dlp -j --no-warnings ${cookiesArg} "${url}"`;
+    // Run yt-dlp to get JSON metadata without failing if formats are unavailable
+    const command = `yt-dlp -j --ignore-no-formats-error --no-warnings ${cookiesArg} "${url}"`;
     const { stdout } = await execAsync(command);
     
     const data = JSON.parse(stdout);
