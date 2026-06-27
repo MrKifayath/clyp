@@ -75,11 +75,16 @@ export async function POST(request) {
       '-f', 'bestvideo+bestaudio/best',
       '--merge-output-format', 'mkv',
       '--concurrent-fragments', '5',
+      // Try android client - often works without cookies
+      '--extractor-args', 'youtube:player_client=android,mweb',
       '-o', outputTemplate,
     ];
 
     if (cookiesPath) {
       args.push('--cookies', cookiesPath);
+      console.log('Using cookies from:', cookiesPath);
+    } else {
+      console.log('No cookies - trying Android client');
     }
     args.push(url);
 
