@@ -140,46 +140,60 @@ export async function POST(request) {
           return;
         }
 
+        // Check for output file with different extensions
+        let actualOutputPath = expectedOutputPath;
         if (!fs.existsSync(expectedOutputPath)) {
-          fs.writeFileSync(progressPath, JSON.stringify({ status: 'error', error: 'Processed file not found' }));
-          resolve(NextResponse.json({ error: 'Processed file not found' }, { status: 500 }));
-          return;
+          // Try .mp4 if .mkv not found
+          const mp4Path = path.join(tmpDir, `${taskId}.mp4`);
+          if (fs.existsSync(mp4Path)) {
+            actualOutputPath = mp4Path;
+            console.log('Found mp4 file instead of mkv:', mp4Path);
+          } else {
+            console.error('No output file found. Expected:', expectedOutputPath);
+            console.error('Also checked:', mp4Path);
+            fs.writeFileSync(progressPath, JSON.stringify({ status: 'error', error: 'Processed file not found' }));
+            resolve(NextResponse.json({ error: 'Processed file not found' }, { status: 500 }));
+            return;
+          }
         }
 
         fs.writeFileSync(progressPath, JSON.stringify({ status: 'completed' }));
 
-        const stat = fs.statSync(expectedOutputPath);
-        const fileStream = fs.createReadStream(expectedOutputPath);
+        const stat = fs.statSync(actualOutputPath);
+        const fileStream = fs.createReadStream(actualOutputPath);
 
         const stream = new ReadableStream({
           start(controller) {
             fileStream.on('data', (chunk) => controller.enqueue(chunk));
             fileStream.on('end', () => {
               controller.close();
-              fs.unlink(expectedOutputPath, (err) => {
+              fs.unlink(actualOutputPath, (err) => {
                  if(err) console.error("Failed to delete temp file:", err);
               });
               fs.unlink(progressPath, () => {});
             });
             fileStream.on('error', (err) => {
               controller.error(err);
-              fs.unlink(expectedOutputPath, () => {});
+              fs.unlink(actualOutputPath, () => {});
               fs.unlink(progressPath, () => {});
             });
           },
           cancel() {
             fileStream.destroy();
-            fs.unlink(expectedOutputPath, () => {});
+            fs.unlink(actualOutputPath, () => {});
             fs.unlink(progressPath, () => {});
           }
         });
 
-        const safeTitle = `clip-${taskId}.mkv`;
+        // Use the actual file extension
+        const ext = path.extname(actualOutputPath);
+        const safeTitle = `clip-${taskId}${ext}`;
+        const contentType = ext === '.mp4' ? 'video/mp4' : 'video/x-matroska';
         
         resolve(new NextResponse(stream, {
           headers: {
             'Content-Disposition': `attachment; filename="${safeTitle}"`,
-            'Content-Type': 'video/x-matroska',
+            'Content-Type': contentType,
             'Content-Length': stat.size.toString(),
             'X-Task-ID': taskId
           },
