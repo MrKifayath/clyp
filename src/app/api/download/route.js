@@ -70,22 +70,30 @@ export async function POST(request) {
     fs.writeFileSync(progressPath, JSON.stringify({ status: 'starting', progress: null }));
 
     const cookiesPath = getCookiesFile();
+    
+    // List available formats first to see what we can get
+    console.log('Checking available formats...');
+    
     const args = [
       '--download-sections', `*${start}-${end}`,
-      '-f', 'bestvideo+bestaudio/best',
+      '-f', 'bestvideo[height>=1080]+bestaudio/bestvideo+bestaudio/best',
       '--merge-output-format', 'mkv',
       '--concurrent-fragments', '5',
-      // Try android client - often works without cookies
-      '--extractor-args', 'youtube:player_client=android,mweb',
       '-o', outputTemplate,
     ];
 
     if (cookiesPath) {
       args.push('--cookies', cookiesPath);
-      console.log('Using cookies from:', cookiesPath);
+      console.log('✓ Using cookies from:', cookiesPath);
+      // Verify cookie file has content
+      const cookieSize = fs.statSync(cookiesPath).size;
+      console.log('Cookie file size:', cookieSize, 'bytes');
     } else {
-      console.log('No cookies - trying Android client');
+      console.warn('⚠ No cookies found - quality may be limited');
+      // Fallback to Android client without cookies
+      args.push('--extractor-args', 'youtube:player_client=android');
     }
+    
     args.push(url);
 
     console.log(`Executing yt-dlp ${args.join(' ')}`);
